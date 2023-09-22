@@ -12,8 +12,6 @@ library(sf)
 
 walkability <- readRDS("walkabilityData.rds")
 
-pyZillow <- reticulate::py_run_file("searchZillow.py")
-
 # Define UI for application that draws a histogram
 ui <- fluidPage(
   
@@ -87,10 +85,10 @@ server <- function(input, output) {
                   stroke = TRUE,weight = .3,color="black",
                   fillOpacity = .6,fill = TRUE,
                   fillColor = ~pal(NatWalkInd),
-                  popup = paste0(walkability_plt$NAME,", Tract ",walkability_plt$tract,"<br>Walk Index: ",round(walkability_plt$NatWalkInd,2),"<br><a href='",walkability_plt$censusLink,"' target='blank'>Census Info</a>")) 
+                  popup = paste0(walkability_plt$NAME,", Census Tract ",walkability_plt$tract,"<br>Walk Index: ",round(walkability_plt$NatWalkInd,2),"<br><a href='",walkability_plt$censusLink,"' target='blank'>Census Info</a>")) 
     
     if(input$showZillow){
-      # browser()
+      pyZillow <- reticulate::py_run_file("searchZillow.py")
       
       listings <- pyZillow$searchZillow(mapBounds = iso_bbox,price = input$price,beds = input$beds,baths = input$baths)
       

@@ -1,0 +1,36 @@
+---
+title: "R Notebook"
+---
+
+```{r}
+# need county names, which we can connect to the FIPS code in the walkability data set
+library(rvest)
+
+dat <- read_html("https://unicede.air-worldwide.com/unicede/unicede_colorado_fips_3.html") %>%
+  html_table()
+
+countyfips <- dat[[1]] %>%
+  mutate(COUNTYFP = as.character(`FIPS County Code`),
+         COUNTYFP = case_when(str_length(COUNTYFP) == 1 ~ paste0("00",COUNTYFP),
+                              str_length(COUNTYFP) == 2 ~ paste0("0",COUNTYFP),
+                              TRUE ~ COUNTYFP),
+         county = paste0(`County Name`,"_County")) %>%
+  select(COUNTYFP,county)
+```
+
+```{r}
+walkabilityData <- 
+  walkabilityData %>% 
+  mutate(tract = {paste0(str_sub(TRACTCE,1,-3),".",str_sub(TRACTCE,-2,-1)) %>%
+      str_remove_all("^0{1,}") %>%
+      str_remove_all("\\.00$")}) %>%
+  select(tract,everything()) %>%
+  left_join(countyfips,by = "COUNTYFP") %>%
+  mutate(censusLink = paste0("https://data.census.gov/profile/Census_Tract_",tract,",_",county,",_Colorado?g=1400000US",STATEFP,COUNTYFP,TRACTCE))
+
+saveRDS(walkabilityData,"zillow-walkability/walkabilityData.rds")
+```
+
+
+
+
