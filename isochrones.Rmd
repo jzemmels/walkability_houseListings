@@ -1,0 +1,102 @@
+---
+title: "R Notebook"
+---
+
+*isochrone*: two points that take the same time to travel to
+
+
+```{r setup}
+library(tidyverse)
+library(osrm)
+
+library(sf)
+library(tigris)
+```
+
+```{r}
+iso <- osrm::osrmIsochrone(loc = c(-104.87730291085334,39.40346156453361),breaks = 35) %>%
+  st_as_sf() %>%
+  st_transform(crs = 4326)
+
+# counties <- tigris::counties(state = "CO") %>%
+#   st_as_sf() %>%
+#   st_transform(crs = 4326)
+# 
+# counties %>%
+#   filter(NAME == "Douglas") %>%
+#   ggplot() +
+#   geom_sf() +
+#   geom_sf(data = iso,fill = NA)
+```
+
+```{r}
+sf_use_s2(FALSE)
+
+walkability <- sf::st_read("WalkabilityIndex/Natl_WI.gdb/") %>% 
+  rename(geometry = Shape) %>%
+  filter(str_detect(CBSA_Name,"Denver")) %>%
+  st_as_sf() %>%
+  st_transform(crs = 4326)
+
+# saveRDS(walkability,file = "walkabilityData.rds")
+
+walkability <- walkability %>%
+  st_intersection(iso)
+
+walkability %>%
+  filter(str_detect(CBSA_Name,"Denver")) %>%
+  # filter(str_detect(CSA_Name,"Denver")) %>%
+  # rename(geometry = Shape) %>%
+  ggplot() +
+  geom_sf(aes(fill = NatWalkInd))
+```
+
+## Include census demographic data
+
+Where to download shape files: https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2022
+
+Mainly interested in the "NAME" column from here, which refers to human-readable "places" names (more specific than city/town names)
+
+```{r}
+censusData <- sf::st_read("tl_2022_08_place/") %>%
+  sf::st_as_sf() %>%
+  sf::st_transform(crs = 4326) 
+
+walkability <-
+  walkability %>%
+  sf::st_intersection(censusData %>%
+                        select(GEOID,NAME,geometry))
+
+saveRDS(walkability,"walkabilityData.rds")
+```
+
+
+```{r}
+library(leaflet)
+
+pal <- colorNumeric(
+  palette = "Greens",
+  domain = walkability$NatWalkInd[walkability$NatWalkInd > 13],
+  na.color = "white"
+  )
+
+leaflet() %>%
+  # addTiles() %>%
+  # addProviderTiles(providers$Stamen.Toner) %>%
+  addProviderTiles(providers$Esri.WorldStreetMap) %>%
+  addMarkers(lng = -104.87730291085334,lat = 39.40346156453361) %>%
+  addPolygons(data = iso,
+              weight = 2,color = "#013220",
+              fill = FALSE) %>%
+  addPolygons(data = walkability,
+              stroke = TRUE,weight = .3,color="black",
+              fillOpacity = .6,fill = TRUE,
+              fillColor = ~pal(NatWalkInd),
+              popup = paste0(walkability$NAME,"<br>",round(walkability$NatWalkInd,2))) %>%
+  addMarkers(lng = zillowDat$long,lat = zillowDat$lat,
+             popup = paste0("<img src='",zillowDat$imgSrc,"' height='150px' width='150px'/><br>","$",zillowDat$price," ",zillowDat$statusText,"<br>",zillowDat$beds," beds, ",zillowDat$baths," baths<br><a href='https://www.zillow.com/",zillowDat$detailUrl,"'>Zillow Link</a>"))
+```
+
+
+
+

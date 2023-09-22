@@ -1,0 +1,51 @@
+---
+title: "R Notebook"
+---
+
+Scrapfly article on scraping Zillow properties: https://scrapfly.io/blog/how-to-scrape-zillow/#scraping-zillow-properties
+
+```{r setup}
+library(tidyverse)
+library(reticulate)
+
+pyZillow <- reticulate::py_run_file("zillow-walkability/searchZillow.py")
+```
+
+
+```{r}
+dat <- pyZillow$searchZillow()
+
+colnames(dat[[1]]) <- dat[[2]]
+
+zillowDat <- dat[[1]] %>%
+  as_tibble() %>%
+  select(zpid,price,beds,baths,area,latLong,statusText,imgSrc,detailUrl,address,timeOnZillow
+         # ,hdpData,variableData,info3String,brokerName,streetViewMetadataURL,streetViewURL,info1String
+         ) %>%
+  mutate(price = map_dbl(price,~ as.numeric(str_remove_all(str_remove_all(.,"\\$"),","))),
+         across(c(beds,baths,area,timeOnZillow),as.numeric),
+         across(c(zpid,statusText,imgSrc,detailUrl,address),as.character),
+         lat = map_dbl(latLong,~ as.numeric(.$latitude)),
+         long = map_dbl(latLong, ~ as.numeric(.$longitude))) %>%
+  select(zpid,lat,long,price,statusText,beds,baths,timeOnZillow,area,imgSrc,detailUrl) %>%
+  sf::st_as_sf(coords = c("long","lat"),crs = 4326)  %>%
+  mutate(longlat = sf::st_coordinates(.))
+
+zillowDat$longlat[,1]
+```
+
+```{r}
+ 
+
+sf::st_is_longlat()
+
+%>%
+  sf::st_intersection(iso)
+```
+
+```{r}
+
+```
+
+
+
