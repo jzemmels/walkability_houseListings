@@ -1,0 +1,238 @@
+---
+title: "R Notebook"
+---
+
+Redfin scraping article: <https://scrapfly.io/blog/how-to-scrape-redfin/#scraping-redfin-property-data>
+
+```{r setup}
+library(tidyverse)
+library(reticulate)
+library(rvest)
+# reticulate::py_install("parsel",pip=TRUE)
+```
+
+
+```{python}
+import asyncio
+import json
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List
+
+import arrow
+import jmespath
+# from scrapfly import ScrapeApiResponse, ScrapeConfig, ScrapflyClient
+from typing_extensions import TypedDict
+
+class PropertyResult(TypedDict):
+    """type hint for property result. i.e. Defines what fields are expected in property dataset"""
+
+    photos: list[str]
+    videos: list[str]
+    price: int
+    info: dict[str, str]
+    amenities: list[dict[str, str]]
+    records: dict[str, str]
+    history: dict[str, str]
+    floorplan: dict[str, str]
+    activity: dict[str, str]
+
+session = AsyncClient(headers={
+    # use same headers as a popular web browser (Chrome on Windows in this case)
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+    "Accept-Language": "en-US,en;q=0.9",
+})
+
+
+def extract_cache(react_initial_context):
+    """extract microservice cache data from the react server agent"""
+    result = {}
+    for name, cache in react_initial_context["ReactServerAgent.cache"]["dataCache"].items():
+        # first we retrieve cached response and see whether it's a success
+        try:
+            cache_response = cache["res"]
+        except KeyError:  # empty cache
+            continue
+        if cache_response.get("status") != 200:
+            print("skipping non 200 cache")
+            continue
+        # then extract cached response body and interpret it as a JSON
+        cache_data = cache_response.get("body", {}).get("payload")
+        if not cache_data:
+            cache_data = json.loads(cache_response["text"].split("&&", 1)[-1]).get("payload")
+        if not cache_data:
+            # skip empty caches
+            continue
+        # for Redfin we can cleanup cache names for home data endpoints:
+        if "/home/details" in name:
+            name = name.split("/home/details/")[-1]
+        result[name.replace("/", "")] = cache_data
+        # ^note: we sanitize name to avoid slashes as they are not allowed in JMESPath
+    return result
+
+
+def parse_property(response: Response):
+    selector = Selector(response.text)
+    script = selector.xpath('//script[contains(.,"ServerState.InitialContext")]/text()').get()
+    initial_context = re.findall(r"ServerState.InitialContext = (\{.+\});", str(script))
+    if not initial_context:
+        print(f"page {response.url} is not a property listing page")
+        return
+    return extract_cache(json.loads(initial_context[0]))
+
+
+async def scrape_properties(urls: list[str]) -> list[PropertyResult]:
+    to_scrape = [session.get(url) for url in urls]
+    properties = []
+    for response in asyncio.as_completed(to_scrape):
+        properties.append(parse_property(await response))
+    return properties
+
+from typing import TypedDict
+import jmespath
+
+def parse_redfin_proprety_cache(data_cache) -> PropertyResult:
+    """parse Redfin's cache data for proprety information"""
+    # here we define field name to JMESPath mapping
+    parse_map = {
+        # from top area of the page: basic info, videos and photos
+        "photos": "aboveTheFold.mediaBrowserInfo.photos[*].photoUrls.fullScreenPhotoUrl",
+        "videos": "aboveTheFold.mediaBrowserInfo.videos[*].videoUrl",
+        "price": "aboveTheFold.addressSectionInfo.priceInfo.amount",
+        "info": """aboveTheFold.addressSectionInfo.{
+            bed_num: beds,
+            bath_numr: baths,
+            full_baths_num: numFullBaths,
+            sqFt: sqFt,
+            year_built: yearBuitlt,
+            city: city,
+            state: state,
+            zip: zip,
+            country_code: countryCode,
+            fips: fips,
+            apn: apn,
+            redfin_age: timeOnRedfin,
+            cumulative_days_on_market: cumulativeDaysOnMarket,
+            property_type: propertyType,
+            listing_type: listingType,
+            url: url
+        }
+        """,
+        # from bottom area of the page: amenities, records and event history
+        "amenities": """belowTheFold.amenitiesInfo.superGroups[].amenityGroups[].amenityEntries[].{
+            name: amenityName, values: amenityValues
+        }""",
+        "records": "belowTheFold.publicRecordsInfo",
+        "history": "belowTheFold.propertyHistoryInfo",
+        # other: sometimes there are floorplans
+        "floorplan": r"listingfloorplans.floorPlans",
+        # and there's always internal Redfin performance info: views, saves, etc.
+        "activity": "activityInfo",
+    }
+    results = {}
+    for key, path in parse_map.items():
+        value = jmespath.search(path, data_cache)
+        results[key] = value
+    return results
+
+session = AsyncClient(headers={
+    # use same headers as a popular web browser (Chrome on Windows in this case)
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+    "Accept-Language": "en-US,en;q=0.9",
+})
+
+
+async def scrape_feed(url) -> Dict[str, datetime]:
+  """scrape Redfin sitemap and return url:datetime dictionary"""
+  result = await session.get(url)
+  selector = Selector(text=result.text, type="xml")
+  results = {}
+  for item in selector.xpath("//url"):
+      url = item.xpath("loc/text()").get()
+      pub_date = item.xpath("lastmod/text()").get("%Y-%m-%dT%H:%M:%S.%f%z")
+      results[url] = arrow.get(pub_date).datetime
+  return results
+
+
+# scrape_feed("https://www.redfin.com/sitemap_com_city.xml")
+# urls = [
+#     "https://www.redfin.com/FL/Cape-Coral/402-SW-28th-St-33914/home/61856041",
+#     "https://www.redfin.com/FL/Cape-Coral/4202-NW-16th-Ter-33993/home/62053611",
+#     "https://www.redfin.com/FL/Cape-Coral/1415-NW-38th-Pl-33993/home/62079956",
+# ]
+# 
+
+async def example_run():
+  feed = await scrape_feed("https://www.redfin.com/sitemap_com_city_CO.xml.gz")
+  # asyncio.run(scrape_feed("https://www.redfin.com/newest_listings.xml"))
+
+
+
+if __name__ == "__main__":
+    asyncio.run(scrape_feed("https://www.redfin.com/city/5155/CO/Denver"))
+```
+
+Denver, Jefferson, Arapahoe
+
+```{r}
+listings <- 
+  map_dfr(c("Denver","Jefferson","Arapahoe"),
+        function(county){
+          
+          script_txt <-
+            rvest::read_html(paste0("https://www.redfin.com/county/377/CO/",
+                                    county,
+                                    "-County/filter/property-type=house,min-beds=2,max-beds=10,min-baths=1.5,max-baths=10,max-price=500000,min-price=200000")) %>%
+            rvest::html_nodes(xpath=".//script[contains(., 'ServerState.InitialContext')]") %>%
+            html_text() %>% 
+            stringi::stri_split_lines() %>% 
+            flatten_chr()  %>% 
+            keep(stringi::stri_detect_regex, "^root.__reactServerState.InitialContext")
+          
+          script_txt <- sub('^[^\\{]*\\{', '{', script_txt)
+          
+          script_json <- jsonlite::fromJSON(str_extract(script_txt,'^.*"webViewAppName":null\\}'))
+          
+          searchResults_ind <- which(str_detect(names(script_json[[1]]$dataCache),"include_nearby_homes") & 
+                                       str_detect(names(script_json[[1]]$dataCache),"max_price=") &
+                                       !str_detect(names(script_json[[1]]$dataCache),"gis-cluster"))[1]
+          
+          searchResults <- script_json[[1]]$dataCache[[searchResults_ind]]$res$text
+          
+          homes_df <- searchResults %>%
+            str_extract('\\{\\"homes.*\\}$') %>%
+            str_sub(1,-2) %>%
+            jsonlite::fromJSON() %>%
+            .$homes  %>%
+            select(mlsId,mlsStatus,price,beds,baths,stories,latLong,streetLine,state,zip,
+                   # photos,alternatePhotosInfo,
+                   url,listingRemarks) %>%
+            unnest(c(mlsId,price,latLong,streetLine),
+                   names_sep = "_") %>%
+            unnest(latLong_value) %>%
+            select(-contains("_level")) %>%
+            set_names(str_remove_all(names(.),"_value")) %>%
+            mutate(url = paste0("https://www.redfin.com",url),
+                   county = county) %>%
+            select(price,beds,baths,stories,latitude,longitude,streetLine,county,state,zip,url,mlsId,mlsStatus,listingRemarks) %>%
+            filter((mlsStatus %in% c("Active","Coming Soon")))
+          
+        })
+
+listings
+```
+
+```{r}
+script_json$ReactServerAgent.cache$dataCache$`/stingray/api/gis?al=1&include_nearby_homes=true&market=denver&max_price=500000&num_baths=1.5&num_beds=2&num_homes=350&ord=redfin-recommended-asc&page_number=1&region_id=377&region_type=5&sf=1,2,5,6,7&start=0&status=9&uipt=1&v=8`$res$text %>% str_extract('\\{\\"homes.*\\}$') %>%
+    str_sub(1,-2) %>%
+    jsonlite::fromJSON() %>%
+    .$homes
+```
+
+
+
+
+

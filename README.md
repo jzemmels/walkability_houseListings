@@ -9,25 +9,21 @@
 An application that visualizes the walkability and Zillow listings
 within an isochrone. Currently designed for the Denver metro.
 
-Run the app with the following. See below for more set up details.
+Run the app with the following.
+<!-- See below for more set up details. -->
 
 ``` r
 shiny::runGitHub("jzemmels/walkability_zillowMap",subdir = "zillow-walkability")
 ```
 
-We assume that you have some R and Python libraries installed on your
-machine. The code below will install the required packages.
-
-``` r
-# required R packages
-install.packages(c("tidyverse","shiny","shinyWidgets","reticulate","leaflet"))
-
-# required Python libraries
-reticulate::py_install(c("httpx","pandas"),pip=TRUE)
-```
-
-Note that you may need to set up Python using the `reticulate` R
-package. See <https://rstudio.github.io/reticulate/> for more
-information. The Python dependency is isolated to the Zillow housing
-data scraping, so you can just not use that functionality if you don’t
-want to worry about Python.
+<!-- We assume that you have some R and Python libraries installed on your machine. -->
+<!-- The code below will install the required packages. -->
+<!-- ```{r,eval=FALSE} -->
+<!-- # required R packages -->
+<!-- install.packages(c("tidyverse","shiny","shinyWidgets","reticulate","leaflet")) -->
+<!-- # required Python libraries -->
+<!-- reticulate::py_install(c("httpx","pandas"),pip=TRUE) -->
+<!-- ``` -->
+<!-- Note that you may need to set up Python using the `reticulate` R package. -->
+<!-- See <https://rstudio.github.io/reticulate/> for more information. -->
+<!-- The Python dependency is isolated to the Zillow housing data scraping, so you can just not use that functionality if you don't want to worry about Python. -->
